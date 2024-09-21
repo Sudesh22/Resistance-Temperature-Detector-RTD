@@ -1,381 +1,337 @@
+//--------------------------------------------IMPORTING LIBRARIES------------------------------------------------------------------------------------------------------//
+
+#include <SPI.h>
+#include <WiFi.h>
+#include <Wire.h>
+#include "RTClib.h"
 #include <ADS1X15.h>
+#include <AsyncTCP.h>
+#include <SPIMemory.h>
+#include <WiFiClient.h>
+#include <ESPAsyncWebServer.h>
 #include <LiquidCrystal_I2C.h>
 
-ADS1115 ADS(0x48);
-ADS1115 ADS2(0x49);
-ADS1115 ADS3(0x4A);
-ADS1115 ADS4(0x4B);
+//--------------------------------------------IMPORTING LIBRARIES------------------------------------------------------------------------------------------------------//
 
-LiquidCrystal_I2C lcd(0x27, 20, 4);
 
-#define rtdline 2
-#define rtdline2 3
-#define rtdline3 4
-#define rtdline4 5
 
-#define leadline 9
-#define leadline2 10
-#define leadline3 11
-#define leadline4 12
+//--------------------------------------------OBJECT INITIALIZATION------------------------------------------------------------------------------------------------------//
+
+RTC_DS3231 rtc;                         // RTC Object
+SPIFlash memory;                        // Initialize SPI Flash memory object
+LiquidCrystal_I2C lcd(0x27, 20, 4);     // Initialize I2C LCD object
+
+WiFiClient client;                      // Initialising the WiFi Server Object
+IPAddress ip(192, 168, 19, 2);          // IP Address of the server
+IPAddress gateway(192, 168, 19, 2);     // Gateway same as the Client Device
+IPAddress netmask(255, 255, 255, 0);    // Netmask of the Server
+AsyncWebServer server(5210);            // Initialising the WebServer at port 5210
+
+//--------------------------------------------OBJECT INITIALIZATION------------------------------------------------------------------------------------------------------//
+
+
+
+//--------------------------------------------CHANNEL INITIALIZATION------------------------------------------------------------------------------------------------------//
+
+uint16_t Device_ID = 2241;   // DEVICE ID change as per need
+uint8_t i2cMuxes = 1;       // if max 4 then 0, if max 8 then 1, if max 16 then 2
+uint8_t channels = 8;       // channel nuimbers can be: 4 / 8 / 16
+
+//--------------------------------------------CHANNEL INITIALIZATION------------------------------------------------------------------------------------------------------//
+
+
+
+//--------------------------------------------PIN DECLARATION------------------------------------------------------------------------------------------------------//
+
+#define CHIP_SELECT_PIN 5                         // Pin connected to the SPI Flash memory chip select
+const uint8_t shiftRegister1[] = { 12, 14, 13 };  // { ST_CP pin, SH_CP pin, DS pin } for Shift Register 1
+const uint8_t shiftRegister2[] = { 26, 33, 25 };  // { ST_CP pin, SH_CP pin, DS pin } for Shift Register 2
+
+//--------------------------------------------PIN DECLARATION------------------------------------------------------------------------------------------------------//
+
+
+
+//--------------------------------------------INITIALIZING VARIABLES----------------------------------------------------------------------------------------------------------//
+
+byte muxArray[] = { 0x70 };                                            // I2C Address array for I2C muxes
+byte adsArray[] = { 0x48, 0x49, 0x4A, 0x4B, 0x48, 0x49, 0x4A, 0x4B };  // I2C Address array for ADS1115
+byte dataShift[] = { 85, 170 };                                        // Data representing 01010101 (85) and 10101010 (170) to control the outputs using shift registers
+
+uint32_t address = 16;          // Starting address to write data
+uint32_t LastLocation = 0;      // Memory location to check if rom is empty
+
+bool logState0 = false;         // variable to track when not to save data
+bool logState15 = false;        // variable to track when to save data
+bool Boot = true;               // variable to track when ESP is reset
+
+float temperatureArray[8] = { 0 };      // Array to hold all the temperature values
+float rtdArray[8] = { 0 };              // Array to hold all the RTD resistance values
+
+const char *ssid = "VEDA THERMA X8";    // ESP SSID
+const char *password = "12345678";      // ESP Password
+String inputDate, inputTime;            // String to store the date and time input by the user
+
+//--------------------------------------------INITIALIZING VARIABLES----------------------------------------------------------------------------------------------------------//
+
+
+
+//------------------------------------------------TIME VARIABLES------------------------------------------------------------------------------------------------------//
+
+unsigned long previousTime = 0;                   // variable that holds the previous time in millis
+const unsigned long eventInterval = 900000;       // 15 mins into milliseconds that determine the interval after the data is stored into flash
+//const unsigned long eventInterval = 30000;      // 30 secs into milliseconds that determine the interval after the data is stored into flash
+
+//------------------------------------------------TIME VARIABLES------------------------------------------------------------------------------------------------------//
+
+
+
+//-----------------------------------------------SETUP FUNCTION----------------------------------------------------------------------------------------------------------//
 
 void setup() {
-  Serial.begin(115200);
-  Serial.println(__FILE__);
-  Serial.print("ADS1X15_LIB_VERSION: ");
-  Serial.println(ADS1X15_LIB_VERSION);
-
-  Wire.begin();
-  lcd.init();
-  lcd.backlight();
-
-  ADS.begin();
-  ADS2.begin();
-  ADS3.begin();
-  ADS4.begin();
-
-  ADS.setGain(0);
-  ADS2.setGain(0);
-  ADS3.setGain(0);
-  ADS4.setGain(0);
+  Wire.begin();             // Begin the Wire object
+  memory.begin();           // Initialize SPI Flash memory with chip select pin
+  lcd.init();               // Initialise LCD
+  lcd.backlight();          // Enable backlight
   
-  pinMode(rtdline, OUTPUT);
-  pinMode(rtdline2, OUTPUT);
-  pinMode(rtdline3, OUTPUT);
-  pinMode(rtdline4, OUTPUT);
+  if (!rtc.begin()) {                    // Check if RTC is available
+    Serial.println("Couldn't find RTC");
+    lcd.setCursor(0, 0);                 // Print error msg on RTC failure
+    lcd.print("Couldn't find RTC");
+    delay(500);
+  }         
 
-  pinMode(leadline, OUTPUT);
-  pinMode(leadline2, OUTPUT);
-  pinMode(leadline3, OUTPUT);
-  pinMode(leadline4, OUTPUT);
+  lcd.setCursor(6, 0);      // Print welcome msg and company name on startup
+  lcd.print("Welcome");
+  delay(500);
+
+  lcd.setCursor(8, 1);
+  lcd.print("To");
+  delay(500);
+
+  lcd.setCursor(5, 2);
+  lcd.print("Vedantrik");
+  delay(500);
+
+  lcd.setCursor(4, 3);
+  lcd.print("Technologies");
+  delay(3000);
+
+  Serial.begin(115200);  // Begin the serial communication at 115200 bps
+
+  for (uint8_t i = 0; i < 3; i++) {                 // Initialise the shift register 1 pins as output
+    pinMode(shiftRegister1[i], OUTPUT);
+  }
+
+  for (uint8_t i = 0; i < 3; i++) {                 // Initialise the shift register 2 pins as output
+    pinMode(shiftRegister2[i], OUTPUT);
+  }
+
+  WiFi.mode(WIFI_AP);                  // Initialize ESP32 in AP Mode
+  WiFi.softAPConfig(ip, ip, netmask);  // Passing the IP Address, Gateway Address (same as IP Address), and Netmask
+  WiFi.softAP(ssid, password);         // Setting up the NodeMCU in AP Mode with Credentials defined above
+
 }
 
-
-void loop() {
-  digitalWrite(rtdline, 1);                               /////////////////////////////////////////////////////////////////
-  delay(2000);
-  int16_t val_02 = ADS.readADC_Differential_0_2();
-  float volts_02 = ADS.toVoltage(val_02);
-  // volts_02 = sqrt(volts_02 * volts_02);
-  float I = volts_02 / 300.0;
-  Serial.print("vrtd: ");
-  Serial.print("\t");
-  Serial.println(volts_02, 6);
-  Serial.print("\I: ");
-  Serial.print("\t");
-  Serial.println(I, 6);
-
-  int16_t val_01 = ADS.readADC_Differential_0_1();                                                             
-  float volts_01 = ADS.toVoltage(val_01);
-  // volts_01 = sqrt(volts_01 * volts_01);
-  Serial.print("vload: ");
-  Serial.print("\t");                       
-  Serial.println(volts_01, 6);
-  float RTD = (volts_01 / I)-(0.0121*(volts_01 / I));
-  Serial.print("\RTD: ");
-  Serial.print("\t");
-  Serial.println(RTD, 6);
-
-  digitalWrite(rtdline, 0);                                 //////////////////////////////////////////////////////////////
-
-  delay(50);
-
-  digitalWrite(leadline, 1);                                ////////////////////////////////////////////////////////////////
-  delay(2000);
-  val_02 = ADS.readADC_Differential_0_2();
-  volts_02 = ADS.toVoltage(val_02);
-  // volts_02 = sqrt(volts_02 * volts_02);
-  I = volts_02 / 300.0;
-  Serial.print("\I: ");
-  Serial.print("\t");
-  Serial.println(I, 6);
-
-  int16_t val_03 = ADS.readADC_Differential_0_3();
-  float volts_03 = ADS.toVoltage(val_03);
-  // volts_03 = sqrt(volts_03 * volts_03);
-  Serial.print("v03: ");
-  Serial.print("\t");
-  Serial.println(volts_03, 6);
-  float lead = (volts_03 / I)-(0.121*(volts_03 / I));
-  Serial.print("\lead: ");
-  Serial.print("\t");
-  Serial.println(lead, 6);
-
-  digitalWrite(leadline, 0);                                   ///////////////////////////////////////////////////
-
-  Serial.print("\R: ");
-  Serial.print("\t");
-  float t = sqrt((RTD - lead) * (RTD - lead));
-  Serial.println(t, 6);
-  Serial.println();
-  Serial.print("t: ");
-  Serial.print("\t");
-  Serial.println((((t - 100.0) / 100.0) / 0.00385055), 6);
+//-----------------------------------------------SETUP FUNCTION----------------------------------------------------------------------------------------------------------//
 
 
-////////////////////////////////////////////////////////////////////////// -------CH2-------- ///////////////////////////////////////////////////////////////////////////
 
+//--------------------------------------------FUNCTION DECLARATIONS------------------------------------------------------------------------------------------------------//
 
-  digitalWrite(rtdline2, 1);                               /////////////////////////////////////////////////////////////////
-  delay(2000);
-  int16_t val_02CH2 = ADS2.readADC_Differential_0_2();
-  float volts_02CH2 = ADS2.toVoltage(val_02CH2);
-  // volts_02CH2 = sqrt(volts_02CH2 * volts_02CH2);
-  float ICH2 = volts_02CH2 / 300.0;
-  Serial.print("vrtd: ");
-  Serial.print("\t");
-  Serial.println(volts_02CH2, 6);
-  Serial.print("\I: ");
-  Serial.print("\t");
-  Serial.println(ICH2, 6);
+void TCA9548A(uint8_t var, uint8_t bus) {             //-----> Function that selects the I2C mux and selects a channel
+  Wire.beginTransmission(muxArray[var]);                                              // TCA9548A address is selected by the for loop
+  Serial.println("I2C Mux Addr: 0x" + String(muxArray[var], HEX) + " bus: " + bus);
+  Wire.write(1 << bus);                                                               // send byte to select bus
+  Wire.endTransmission();                                                             // End the transmission
+}
 
-  int16_t val_01CH2 = ADS2.readADC_Differential_0_1();                                                             
-  float volts_01CH2 = ADS2.toVoltage(val_01CH2);
-  // volts_01CH2 = sqrt(volts_01CH2 * volts_01CH2);
-  Serial.print("vload: ");
-  Serial.print("\t");                       
-  Serial.println(volts_01CH2, 6);
-  float RTDCH2 = (volts_01CH2 / ICH2)-(0.0121*(volts_01CH2 / ICH2));
-  Serial.print("\RTD: ");
-  Serial.print("\t");
-  Serial.println(RTDCH2, 6);
+void displayTemp(uint8_t var){                        //-----> Function that displays the temperature readings on the LCD
+  if (var < 4){                                                      // Prints the 1st column on left of the LCD display
+  lcd.setCursor(0, var);                                             // var acts as a row selector from 0 to 3
+  lcd.print(String(var+1) + ")" + String(temperatureArray[var]));
+  }
+  else{                                                              // Prints the 2nd column on right of the LCD display
+  lcd.setCursor(10, var%4);                                          // var acts as a row selector from 4 to 7 as 4%4 = 0, 5%4 = 1... & so on
+  lcd.print(String(var+1) + ")" + String(temperatureArray[var]));
+  }
+}
 
-  digitalWrite(rtdline2, 0);                                 //////////////////////////////////////////////////////////////
-
-  delay(50);
-
-  digitalWrite(leadline2, 1);                                ////////////////////////////////////////////////////////////////
-  delay(2000);
-  val_02CH2 = ADS2.readADC_Differential_0_2();
-  volts_02CH2 = ADS2.toVoltage(val_02CH2);
-  // volts_02CH2 = sqrt(volts_02CH2 * volts_02CH2);
-  ICH2 = volts_02CH2 / 300.0;
-  Serial.print("\I: ");
-  Serial.print("\t");
-  Serial.println(ICH2, 6);
-
-  int16_t val_03CH2 = ADS2.readADC_Differential_0_3();
-  float volts_03CH2 = ADS2.toVoltage(val_03CH2);
-  // volts_03CH2 = sqrt(volts_03CH2 * volts_03CH2);
-  Serial.print("v03: ");
-  Serial.print("\t");
-  Serial.println(volts_03CH2, 6);
-  float leadCH2 = (volts_03CH2 / ICH2)-(0.121*(volts_03CH2 / ICH2));
-  Serial.print("\lead: ");
-  Serial.print("\t");
-  Serial.println(leadCH2, 6);
-
-  digitalWrite(leadline2, 0);                                   ///////////////////////////////////////////////////
-
-  Serial.print("\R: ");
-  Serial.print("\t");
-  float tCH2 = sqrt((RTDCH2 - leadCH2) * (RTDCH2 - leadCH2));
-  Serial.println(tCH2, 6);
-  Serial.println();
-  Serial.print("t: ");
-  Serial.print("\t");
-  Serial.println((((tCH2 - 100.0) / 100.0) / 0.00385055), 6);
-
-
-////////////////////////////////////////////////////////////////////////// -------CH3-------- ///////////////////////////////////////////////////////////////////////////
-
-
-  digitalWrite(rtdline3, 1);                               /////////////////////////////////////////////////////////////////
-  delay(2000);
-  int16_t val_02CH3 = ADS3.readADC_Differential_0_2();
-  float volts_02CH3 = ADS3.toVoltage(val_02CH3);
-  // volts_02CH2 = sqrt(volts_02CH2 * volts_02CH2);
-  float ICH3 = volts_02CH3 / 300.0;
-  Serial.print("vrtd: ");
-  Serial.print("\t");
-  Serial.println(volts_02CH3, 6);
-  Serial.print("\I: ");
-  Serial.print("\t");
-  Serial.println(ICH3, 6);
-
-  int16_t val_01CH3 = ADS3.readADC_Differential_0_1();                                                             
-  float volts_01CH3 = ADS3.toVoltage(val_01CH3);
-  // volts_01CH2 = sqrt(volts_01CH2 * volts_01CH2);
-  Serial.print("vload: ");
-  Serial.print("\t");                       
-  Serial.println(volts_01CH3, 6);
-  float RTDCH3 = (volts_01CH3 / ICH3)-(0.0121*(volts_01CH3 / ICH3));
-  Serial.print("\RTD: ");
-  Serial.print("\t");
-  Serial.println(RTDCH3, 6);
-
-  digitalWrite(rtdline3, 0);                                 //////////////////////////////////////////////////////////////
-
-  delay(50);
-
-  digitalWrite(leadline3, 1);                                ////////////////////////////////////////////////////////////////
-  delay(2000);
-  val_02CH3 = ADS3.readADC_Differential_0_2();
-  volts_02CH3 = ADS3.toVoltage(val_02CH3);
-  // volts_02CH2 = sqrt(volts_02CH2 * volts_02CH2);
-  ICH3 = volts_02CH3 / 300.0;
-  Serial.print("\I: ");
-  Serial.print("\t");
-  Serial.println(ICH3, 6);
-
-  int16_t val_03CH3 = ADS3.readADC_Differential_0_3();
-  float volts_03CH3 = ADS3.toVoltage(val_03CH3);
-  // volts_03CH2 = sqrt(volts_03CH2 * volts_03CH2);
-  Serial.print("v03: ");
-  Serial.print("\t");
-  Serial.println(volts_03CH3, 6);
-  float leadCH3 = (volts_03CH3 / ICH3)-(0.121*(volts_03CH3 / ICH3));
-  Serial.print("\lead: ");
-  Serial.print("\t");
-  Serial.println(leadCH3, 6);
-
-  digitalWrite(leadline3, 0);                                   ///////////////////////////////////////////////////
-
-  Serial.print("\R: ");
-  Serial.print("\t");
-  float tCH3 = sqrt((RTDCH3 - leadCH3) * (RTDCH3 - leadCH3));
-  Serial.println(tCH3, 6);
-  Serial.println();
-  Serial.print("t: ");
-  Serial.print("\t");
-  Serial.println((((tCH3 - 100.0) / 100.0) / 0.00385055), 6);
-
-
-////////////////////////////////////////////////////////////////////////// -------CH4-------- ///////////////////////////////////////////////////////////////////////////
-
-
-  digitalWrite(rtdline4, 1);                               /////////////////////////////////////////////////////////////////
-  delay(2000);
-  int16_t val_02CH4 = ADS4.readADC_Differential_0_2();
-  float volts_02CH4 = ADS4.toVoltage(val_02CH4);
-  // volts_02CH2 = sqrt(volts_02CH2 * volts_02CH2);
-  float ICH4 = volts_02CH4 / 300.0;
-  Serial.print("vrtd: ");
-  Serial.print("\t");
-  Serial.println(volts_02CH4, 6);
-  Serial.print("\I: ");
-  Serial.print("\t");
-  Serial.println(ICH4, 6);
-
-  int16_t val_01CH4 = ADS4.readADC_Differential_0_1();                                                             
-  float volts_01CH4 = ADS4.toVoltage(val_01CH4);
-  // volts_01CH2 = sqrt(volts_01CH2 * volts_01CH2);
-  Serial.print("vload: ");
-  Serial.print("\t");                       
-  Serial.println(volts_01CH4, 6);
-  float RTDCH4 = (volts_01CH4 / ICH4)-(0.0121*(volts_01CH4 / ICH4));
-  Serial.print("\RTD: ");
-  Serial.print("\t");
-  Serial.println(RTDCH4, 6);
-
-  digitalWrite(rtdline4, 0);                                 //////////////////////////////////////////////////////////////
-
-  delay(50);
-
-  digitalWrite(leadline4, 1);                                ////////////////////////////////////////////////////////////////
-  delay(2000);
-  val_02CH4 = ADS4.readADC_Differential_0_2();
-  volts_02CH4 = ADS4.toVoltage(val_02CH4);
-  // volts_02CH2 = sqrt(volts_02CH2 * volts_02CH2);
-  ICH4 = volts_02CH4 / 300.0;
-  Serial.print("\I: ");
-  Serial.print("\t");
-  Serial.println(ICH4, 6);
-
-  int16_t val_03CH4 = ADS4.readADC_Differential_0_3();
-  float volts_03CH4 = ADS4.toVoltage(val_03CH4);
-  // volts_03CH2 = sqrt(volts_03CH2 * volts_03CH2);
-  Serial.print("v03: ");
-  Serial.print("\t");
-  Serial.println(volts_03CH4, 6);
-  float leadCH4 = (volts_03CH4 / ICH4)-(0.121*(volts_03CH4 / ICH4));
-  Serial.print("\lead: ");
-  Serial.print("\t");
-  Serial.println(leadCH4, 6);
-
-  digitalWrite(leadline4, 0);                                   ///////////////////////////////////////////////////
-
-  Serial.print("\R: ");
-  Serial.print("\t");
-  float tCH4 = sqrt((RTDCH4 - leadCH4) * (RTDCH4 - leadCH4));
-  Serial.println(tCH4, 6);
-  Serial.println();
-  Serial.print("t: ");
-  Serial.print("\t");
-  Serial.println((((tCH4 - 100.0) / 100.0) / 0.00385055), 6);
-  // int16_t val_13 = ADS.readADC_Differential_1_3();
-  // int16_t val_23 = ADS.readADC_Differential_2_3();
-  // float volts_13 = ADS.toVoltage(val_13);
-  // float volts_23 = ADS.toVoltage(val_23);
-
-  // Serial.print("\tval_01: ");
+void getReadings(uint8_t var) {                       //-----> Test function to check if all ADS1115 work
+  ADS1115 ADS1(adsArray[var]);                        // Initialise ADS1115 with an address
+  
+  ADS1.begin();                                       // Initialise the ADS object
+  ADS1.setGain(0);                                    // Set gain to 6.144v
+  int16_t val_01 = ADS1.readADC_Differential_0_1();   // Get the differential ADC value
+  float volts_01 = ADS1.toVoltage(val_01);            // Convert ADC value to voltage
+  // Serial.print("\tval_01: ");                      // Serial print the ADC values and voltage
   // Serial.print(val_01);
   // Serial.print("\t");
-  // Serial.println(volts_01, 6);
-  // Serial.print("\tval_02: ");
-  // Serial.print(val_02);
-  // Serial.print("\t");
-  // Serial.println(volts_02, 6);
-  // Serial.print("\tval_03: ");
-  // Serial.print(val_03);
-  // Serial.print("\t");
-  // Serial.println(volts_03, 6);
-  lcd.clear();
-  lcd.setCursor(5, 0);
-  lcd.print("CH1");
-  lcd.setCursor(13, 0);
-  lcd.print("CH2");
-  lcd.setCursor(0, 1);
-  lcd.print("RTD");
-  lcd.setCursor(0, 2);
-  lcd.print("Lead");
-  lcd.setCursor(0, 3);
-  lcd.print("Temp");
-
-  lcd.setCursor(5, 1);
-  lcd.print(RTD, 2);
-  lcd.setCursor(5, 2);
-  lcd.print(lead, 2);
-  lcd.setCursor(5, 3);
-  lcd.print((((t - 100.0) / 100.0) / 0.00385055), 2);
-  lcd.setCursor(13, 1);
-  lcd.print(RTDCH2, 2);
-  lcd.setCursor(13, 2);
-  lcd.print(leadCH2, 2);
-  lcd.setCursor(13, 3);
-  lcd.print((((tCH2 - 100.0) / 100.0) / 0.00385055), 2);
-
-  delay(2000);
-
-  lcd.clear();
-  lcd.setCursor(5, 0);
-  lcd.print("CH3");
-  lcd.setCursor(13, 0);
-  lcd.print("CH4");
-  lcd.setCursor(0, 1);
-  lcd.print("RTD");
-  lcd.setCursor(0, 2);
-  lcd.print("Lead");
-  lcd.setCursor(0, 3);
-  lcd.print("Temp");
-
-  lcd.setCursor(5, 1);
-  lcd.print(RTDCH3, 2);
-  lcd.setCursor(5, 2);
-  lcd.print(leadCH3, 2);
-  lcd.setCursor(5, 3);
-  lcd.print((((tCH3 - 100.0) / 100.0) / 0.00385055), 2);
-  lcd.setCursor(13, 1);
-  lcd.print(RTDCH4, 2);
-  lcd.setCursor(13, 2);
-  lcd.print(leadCH4, 2);
-  lcd.setCursor(13, 3);
-  lcd.print((((tCH4 - 100.0) / 100.0) / 0.00385055), 2);
-
-  // // Serial.print("\tval_13: "); Serial.print(val_13); Serial.print("\t"); Serial.println(volts_13, 3);
-  // // Serial.print("\tval_23: "); Serial.print(val_23); Serial.print("\t"); Serial.println(volts_23, 3);
-  // Serial.println();
-  delay(100);
+  // Serial.println(volts_01, 3);
 }
 
+void activateLine(const uint8_t shiftRegArr[]) {      //-----> Function that activates the shift register controlled Lead line
+  digitalWrite(shiftRegArr[0], LOW);                                  // ST_CP LOW to keep LEDs from changing while reading serial data
+  shiftOut(shiftRegArr[2], shiftRegArr[1], MSBFIRST, dataShift[0]);   // Send the data to the Shift Register
+  Serial.println(dataShift[0], BIN);                                  // Print data in Binary to show the data shifted
+  digitalWrite(shiftRegArr[0], HIGH);                                 // ST_CP HIGH to show the data
+}
 
-//  -- END OF FILE --
+void activateRTD(const uint8_t shiftRegArr[]) {       //-----> Function that activates the shift register controlled RTD line
+  digitalWrite(shiftRegArr[0], LOW);                                  // ST_CP LOW to keep LEDs from changing while reading serial data
+  shiftOut(shiftRegArr[2], shiftRegArr[1], MSBFIRST, dataShift[1]);   // Send the data to the Shift Register
+  Serial.println(dataShift[1], BIN);                                  // Print data in Binary to show the data shifted
+  digitalWrite(shiftRegArr[0], HIGH);                                 // ST_CP HIGH to show the data
+}
+
+float RTDReader(const uint8_t var) {                  //-----> Function that calculates the RTD Resistance
+  ADS1115 ADS1(adsArray[var]);                                                        // Initialise ADS1115 with an address
+  Serial.println("CH" + String(var) + " Addr: 0x" + String(adsArray[var], HEX));
+  ADS1.begin();                                                                       // Initialise the ADS object
+  ADS1.setGain(0);                                                                    // Set gain to 6.144v
+  int16_t val_02 = ADS1.readADC_Differential_0_2();                                   // Get the ADC value
+  float volts_02 = ADS1.toVoltage(val_02);                                            // Convert the ADC value into voltage
+  // volts_02 = sqrt(volts_02 * volts_02);
+  float I = volts_02 / 300.0;                                                         // Calculate current by dividing V/R
+  // Serial.print("vrtd: ");
+  // Serial.print("\t");
+  // Serial.println(volts_02, 6);
+  // Serial.print("\I: ");
+  // Serial.print("\t");
+  // Serial.println(I, 6);
+
+  int16_t val_01 = ADS1.readADC_Differential_0_1();                                   // Get the ADC value
+  float volts_01 = ADS1.toVoltage(val_01);                                            // Convert the ADC value into voltage
+  // volts_01 = sqrt(volts_01 * volts_01);
+  // Serial.print("vload: ");
+  // Serial.print("\t");
+  // Serial.println(volts_01, 6);
+  float RTD = (volts_01 / I) - (0.0121 * (volts_01 / I));                             // Calculate the RTD resistance by subtracting the correction factor
+  // Serial.print("\RTD: ");
+  // Serial.print("\t");
+  // Serial.println(RTD, 6);
+  return RTD;                                                                         // Return the RTD resistance value
+}
+
+float LeadReader(const uint8_t var){                  //-----> Function that calculates lead resistance and returns temperature from all channels
+  ADS1115 ADS1(adsArray[var]);                                                        // Initialise ADS1115 with an address
+  Serial.println("CH" + String(var) + " Addr: 0x" + String(adsArray[var], HEX));
+  ADS1.begin();                                                                       // Initialise the ADS object
+  ADS1.setGain(0);                                                                    // Set gain to 6.144v
+  int16_t val_02 = ADS1.readADC_Differential_0_2();                                   // Get the ADC value
+  float volts_02 = ADS1.toVoltage(val_02);                                            // Convert the ADC value into voltage
+  // volts_02 = sqrt(volts_02 * volts_02);
+  float I = volts_02 / 300.0;                                                         // Calculate current by dividing V/R
+  // Serial.print("\I: ");
+  // Serial.print("\t");
+  // Serial.println(I, 6);
+
+  int16_t val_03 = ADS1.readADC_Differential_0_3();                                   // Get the ADC value
+  float volts_03 = ADS1.toVoltage(val_03);                                            // Convert the ADC value into voltage
+  // volts_03 = sqrt(volts_03 * volts_03);
+  // Serial.print("v03: ");
+  // Serial.print("\t");
+  // Serial.println(volts_03, 6);
+  float lead = (volts_03 / I)-(0.121*(volts_03 / I));                                 // Calculate the Lead resistance by subtracting the correction factor
+  // Serial.print("\lead: ");
+  // Serial.print("\t");
+  // Serial.println(lead, 6);
+
+  float t = sqrt((rtdArray[var] - lead) * (rtdArray[var] - lead));                    // Calculate the Temperature by subtracting the Lead resistance from RTD resistance
+  // Serial.println(t, 6);
+  // Serial.println();
+  // Serial.print("t: ");
+  // Serial.print("\t");
+  // Serial.println((((t - 100.0) / 100.0) / 0.00385055), 6);
+  return t;                                                                           // Return the temperature value
+  
+}
+
+void LogValue() {                                     //-----> Function that saves to the Flash Memory
+
+  DateTime now = rtc.now();                                                   // Re-initialise the now Datetime object
+
+  float dd = (float)now.day();                                                // Storing the date as a float
+  float mm = (float)now.month();                                              // Storing the month as a float
+  float yy = (float)now.year();                                               // Storing the year as a float
+  float HH = (float)now.hour();                                               // Storing the hours as a float
+  float MM = (float)now.minute();                                             // Storing the minutes as a float
+
+  if (String(memory.readFloat(LastLocation)) == "nan") {                      // Check if the data at the 0th index is nan to decide whether to save the Device ID or not
+    memory.writeFloat(LastLocation + 1 * sizeof(float), (float)Device_ID);    // Write the Device ID into the 4th index in the Flash Memory
+    Boot = false;                                                             // Render Boot false since the Device ID is saved
+  }
+
+  if (Boot) {                                                                 // Checks if the ESP is Reset
+    for (uint32_t addr = 16; addr < memory.getCapacity(); addr += 4) {        // For loop to iterate over the data
+      if (String(memory.readFloat(addr)) == "nan") {                          // Checks if the data at 16th index is nan
+        address = addr;                                                       // 
+        break;
+      }
+    }
+    Boot = false;
+  }
+
+  for(uint32_t i = 0; i < channels; i++){
+    memory.writeFloat(address+i, temperatureArray[i]);                  // Writing the Temperature into the memory location
+  }
+  
+  memory.writeFloat(address + 8 * sizeof(float), HH);        // Writing the Hours into the memory location
+  memory.writeFloat(address + 9 * sizeof(float), MM);        // Writing the Minutes into the memory location
+  memory.writeFloat(address + 10 * sizeof(float), dd);       // Writing the Date into the memory location
+  memory.writeFloat(address + 11 * sizeof(float), mm);       // Writing the Month into the memory location
+  memory.writeFloat(address + 12 * sizeof(float), yy);       // Writing the Year into the memory location
+
+  memory.writeFloat(LastLocation, address);                  // Writing adress at the 0th index to just indicate that configuraton process is complete
+  address += 13 * sizeof(float);                             // Incrementing the adress variable by 12 locations since we wrote Temp, Hours and Minutes
+}
+
+//--------------------------------------------FUNCTION DECLARATIONS------------------------------------------------------------------------------------------------------//
+
+
+
+//-----------------------------------------------LOOP FUNCTION-----------------------------------------------------------------------------------------------------------//
+
+void loop() {
+
+  // Updates frequently
+  unsigned long currentTime = millis();         // Get the current instance in milliseconds
+
+  DateTime now = rtc.now();                     // Re-initialise the RTC module
+  float MM = (float)now.minute();               // Storing the minutes as a float
+
+  // if ((MM == (float)0) && (logState0 == 0)) {
+  //   logState0 = true;
+  //   logState30 = false;
+
+  //   LogValue();                                 // Calling the LogValue function to save the readings into the Flash memory
+  // } else if ((MM == (float)30) && (logState30 == 0)) {
+  //   logState30 = true;
+  //   logState0 = false;
+
+  //   LogValue();                                 // Calling the LogValue function to save the readings into the Flash memory
+  // } else {
+  // }
+
+  lcd.clear();
+  for(uint8_t i = 0; i < channels; i++){
+    displayTemp(i);
+  }
+
+  activateRTD(shiftRegister1);            // Enable RTD line via Shift Register 1
+  activateRTD(shiftRegister2);            // Enable RTD line via Shift Register 2
+  delay(2000);                            // Wait for 2 secs to stabilise the voltage on pins
+  for(uint8_t i = 0; i < channels; i++){
+    TCA9548A(0,i);
+    rtdArray[i] = RTDReader(i);           // Read and save all the RTD resistance values in the rtdArray Array
+  }
+
+  activateLine(shiftRegister1);           // Enable Lead line via Shift Register 1
+  activateLine(shiftRegister2);           // Enable Lead line via Shift Register 2
+  delay(2000);                            // Wait for 2 secs to stabilise the voltage on pins
+  for(uint8_t i = 0; i < channels; i++){
+    TCA9548A(0,i);
+    temperatureArray[i] = LeadReader(i);  // Calculate the temperature values and store in the temperature array
+  }
+}
+
+//-----------------------------------------------LOOP FUNCTION-----------------------------------------------------------------------------------------------------------//
