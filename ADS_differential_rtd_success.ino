@@ -44,8 +44,8 @@ uint8_t channels = 8;       // channel nuimbers can be: 4 / 8 / 16
 //--------------------------------------------PIN DECLARATION------------------------------------------------------------------------------------------------------//
 
 #define CHIP_SELECT_PIN 5                         // Pin connected to the SPI Flash memory chip select
-const uint8_t shiftRegister1[] = { 12, 14, 13 };  // { ST_CP pin, SH_CP pin, DS pin } for Shift Register 1
-const uint8_t shiftRegister2[] = { 26, 33, 25 };  // { ST_CP pin, SH_CP pin, DS pin } for Shift Register 2
+const uint8_t shiftRegister1[] = { 12, 14, 13 };  // { ST_CP1 pin, SH_CP1 pin, DS1 pin } for Shift Register 1
+const uint8_t shiftRegister2[] = { 26, 33, 25 };  // { ST_CP2 pin, SH_CP2 pin, DS2 pin } for Shift Register 2
 
 //--------------------------------------------PIN DECLARATION------------------------------------------------------------------------------------------------------//
 
@@ -92,6 +92,7 @@ void setup() {
   memory.begin();           // Initialize SPI Flash memory with chip select pin
   lcd.init();               // Initialise LCD
   lcd.backlight();          // Enable backlight
+  Serial.begin(9600);
   
   if (!rtc.begin()) {                    // Check if RTC is available
     Serial.println("Couldn't find RTC");
@@ -100,6 +101,7 @@ void setup() {
     delay(500);
   }         
 
+  lcd.clear();
   lcd.setCursor(6, 0);      // Print welcome msg and company name on startup
   lcd.print("Welcome");
   delay(500);
@@ -156,18 +158,7 @@ void displayTemp(uint8_t var){                        //-----> Function that dis
   }
 }
 
-void getReadings(uint8_t var) {                       //-----> Test function to check if all ADS1115 work
-  ADS1115 ADS1(adsArray[var]);                        // Initialise ADS1115 with an address
-  
-  ADS1.begin();                                       // Initialise the ADS object
-  ADS1.setGain(0);                                    // Set gain to 6.144v
-  int16_t val_01 = ADS1.readADC_Differential_0_1();   // Get the differential ADC value
-  float volts_01 = ADS1.toVoltage(val_01);            // Convert ADC value to voltage
-  // Serial.print("\tval_01: ");                      // Serial print the ADC values and voltage
-  // Serial.print(val_01);
-  // Serial.print("\t");
-  // Serial.println(volts_01, 3);
-}
+
 
 void activateLine(const uint8_t shiftRegArr[]) {      //-----> Function that activates the shift register controlled Lead line
   digitalWrite(shiftRegArr[0], LOW);                                  // ST_CP LOW to keep LEDs from changing while reading serial data
@@ -190,25 +181,25 @@ float RTDReader(const uint8_t var) {                  //-----> Function that cal
   ADS1.setGain(0);                                                                    // Set gain to 6.144v
   int16_t val_02 = ADS1.readADC_Differential_0_2();                                   // Get the ADC value
   float volts_02 = ADS1.toVoltage(val_02);                                            // Convert the ADC value into voltage
-  // volts_02 = sqrt(volts_02 * volts_02);
+  volts_02 = sqrt(volts_02 * volts_02);
   float I = volts_02 / 300.0;                                                         // Calculate current by dividing V/R
-  // Serial.print("vrtd: ");
-  // Serial.print("\t");
-  // Serial.println(volts_02, 6);
-  // Serial.print("\I: ");
-  // Serial.print("\t");
-  // Serial.println(I, 6);
+  Serial.print("vrtd: ");
+  Serial.print("\t");
+  Serial.println(volts_02, 6);
+  Serial.print("\I: ");
+  Serial.print("\t");
+  Serial.println(I, 6);
 
   int16_t val_01 = ADS1.readADC_Differential_0_1();                                   // Get the ADC value
   float volts_01 = ADS1.toVoltage(val_01);                                            // Convert the ADC value into voltage
-  // volts_01 = sqrt(volts_01 * volts_01);
-  // Serial.print("vload: ");
-  // Serial.print("\t");
-  // Serial.println(volts_01, 6);
+  volts_01 = sqrt(volts_01 * volts_01);
+  Serial.print("vload: ");
+  Serial.print("\t");
+  Serial.println(volts_01, 6);
   float RTD = (volts_01 / I) - (0.0121 * (volts_01 / I));                             // Calculate the RTD resistance by subtracting the correction factor
-  // Serial.print("\RTD: ");
-  // Serial.print("\t");
-  // Serial.println(RTD, 6);
+  Serial.print("\RTD: ");
+  Serial.print("\t");
+  Serial.println(RTD, 6);
   return RTD;                                                                         // Return the RTD resistance value
 }
 
@@ -219,29 +210,30 @@ float LeadReader(const uint8_t var){                  //-----> Function that cal
   ADS1.setGain(0);                                                                    // Set gain to 6.144v
   int16_t val_02 = ADS1.readADC_Differential_0_2();                                   // Get the ADC value
   float volts_02 = ADS1.toVoltage(val_02);                                            // Convert the ADC value into voltage
-  // volts_02 = sqrt(volts_02 * volts_02);
+  volts_02 = sqrt(volts_02 * volts_02);
   float I = volts_02 / 300.0;                                                         // Calculate current by dividing V/R
-  // Serial.print("\I: ");
-  // Serial.print("\t");
-  // Serial.println(I, 6);
+  Serial.print("\I: ");
+  Serial.print("\t");
+  Serial.println(I, 6);
 
   int16_t val_03 = ADS1.readADC_Differential_0_3();                                   // Get the ADC value
   float volts_03 = ADS1.toVoltage(val_03);                                            // Convert the ADC value into voltage
-  // volts_03 = sqrt(volts_03 * volts_03);
-  // Serial.print("v03: ");
-  // Serial.print("\t");
-  // Serial.println(volts_03, 6);
+  volts_03 = sqrt(volts_03 * volts_03);
+  Serial.print("v03: ");
+  Serial.print("\t");
+  Serial.println(volts_03, 6);
   float lead = (volts_03 / I)-(0.121*(volts_03 / I));                                 // Calculate the Lead resistance by subtracting the correction factor
-  // Serial.print("\lead: ");
-  // Serial.print("\t");
-  // Serial.println(lead, 6);
+  Serial.print("\lead: ");
+  Serial.print("\t");
+  Serial.println(lead, 6);
 
-  float t = sqrt((rtdArray[var] - lead) * (rtdArray[var] - lead));                    // Calculate the Temperature by subtracting the Lead resistance from RTD resistance
-  // Serial.println(t, 6);
-  // Serial.println();
-  // Serial.print("t: ");
-  // Serial.print("\t");
+  float t = (((sqrt((rtdArray[var] - lead) * (rtdArray[var] - lead)) - 100.0) / 100.0) / 0.00385055);                    // Calculate the Temperature by subtracting the Lead resistance from RTD resistance
+  Serial.println(t, 6);
+  Serial.println();
+  Serial.print("t: ");
+  Serial.print("\t");
   // Serial.println((((t - 100.0) / 100.0) / 0.00385055), 6);
+  Serial.println(t, 6);
   return t;                                                                           // Return the temperature value
   
 }
@@ -299,18 +291,17 @@ void loop() {
   DateTime now = rtc.now();                     // Re-initialise the RTC module
   float MM = (float)now.minute();               // Storing the minutes as a float
 
-  // if ((MM == (float)0) && (logState0 == 0)) {
+  // if(((int)MM % 15 == 0) && (logState0 == 0)){
   //   logState0 = true;
-  //   logState30 = false;
+  //   logState15 = false;
 
-  //   LogValue();                                 // Calling the LogValue function to save the readings into the Flash memory
-  // } else if ((MM == (float)30) && (logState30 == 0)) {
-  //   logState30 = true;
+  //   LogValue();  // Calling the LogValue function to save the readings into the Flash memory
+  // } else if (((int)MM % 15 != 0)){
   //   logState0 = false;
+  //   logState15 = true;
 
-  //   LogValue();                                 // Calling the LogValue function to save the readings into the Flash memory
-  // } else {
-  // }
+  //   // LogValue();  // Calling the LogValue function to save the readings into the Flash memory
+  // } 
 
   lcd.clear();
   for(uint8_t i = 0; i < channels; i++){
@@ -331,6 +322,7 @@ void loop() {
   for(uint8_t i = 0; i < channels; i++){
     TCA9548A(0,i);
     temperatureArray[i] = LeadReader(i);  // Calculate the temperature values and store in the temperature array
+    Serial.println("temp value from array: " + String(temperatureArray[i]));
   }
 }
 
