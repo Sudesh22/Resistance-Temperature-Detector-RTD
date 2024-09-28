@@ -137,51 +137,51 @@ void setup() {
 
   //--------------------------------------------SERVER ROUTE FUNCTIONS------------------------------------------------------------------------------------------------------//
 
-  // #include <pgmspace.h> // Include pgmspace.h for Flash memory handling
+  #include <pgmspace.h> // Include pgmspace.h for Flash memory handling
 
 
 
-  // server.on("/temp", HTTP_GET, [](AsyncWebServerRequest *request) {                         // Function handling the "/Temp" route
-  //   String Str = "<!DOCTYPE html>\n";
-  //   Str += "<html>\n";
-  //   Str += "<body>\n";
-  //   Str += "<style>\n";
-  //   Str += ".interface canvas {\n";
-  //   Str += "display: block;\n";
-  //   Str += "margin: 0 auto;\n";
-  //   Str += "}\n";
+  server.on("/temp", HTTP_GET, [](AsyncWebServerRequest *request) {                         // Function handling the "/Temp" route
+    String Str = "<!DOCTYPE html>\n";
+    Str += "<html>\n";
+    Str += "<body>\n";
+    Str += "<style>\n";
+    Str += ".interface canvas {\n";
+    Str += "display: block;\n";
+    Str += "margin: 0 auto;\n";
+    Str += "}\n";
 
-  //   Str += ".interface p{\n";
-  //   Str += "background-color: #59D2FE;\n";
-  //   Str += "text-align: left;\n";
-  //   Str += "padding: 10px;\n";
-  //   Str += "border-radius: 10px;\n";
-  //   Str += "}\n";
+    Str += ".interface p{\n";
+    Str += "background-color: #59D2FE;\n";
+    Str += "text-align: left;\n";
+    Str += "padding: 10px;\n";
+    Str += "border-radius: 10px;\n";
+    Str += "}\n";
 
-  //   Str += ".interface h3{\n";
-  //   Str += "background-color: #5C7AFF;\n";
-  //   Str += "padding: 5px ;\n";
-  //   Str += "text-align: center;\n";
-  //   Str += "border-radius: 10px;\n";
-  //   Str += "}\n";
-  //   Str += "</style>\n";
-  //   Str += "<div class=\"interface\">";
-  //   Str += "<h3>Realtime Values</h3>\n";
-  //   for(uint8_t i = 0; i < channels; i++){
-  //     Str += "<p>Sensor "+String(i+1)+") " + String(temperatureArray[i]) + " °C</p>\n";
-  //   }
-  //   Str += "</div>\n";
+    Str += ".interface h3{\n";
+    Str += "background-color: #5C7AFF;\n";
+    Str += "padding: 5px ;\n";
+    Str += "text-align: center;\n";
+    Str += "border-radius: 10px;\n";
+    Str += "}\n";
+    Str += "</style>\n";
+    Str += "<div class=\"interface\">";
+    Str += "<h3>Realtime Values</h3>\n";
+    for(uint8_t i = 0; i < channels; i++){
+      Str += "<p>Sensor "+String(i+1)+") " + String(temperatureArray[i]) + " °C</p>\n";
+    }
+    Str += "</div>\n";
 
-  //   // JavaScript Auto Reload Function
-  //   Str += "<script>\n";
-  //   Str += "setTimeout(function(){\n";
-  //   Str += "window.location.reload();\n";
-  //   Str += "}, 1000);\n";
-  //   Str += "</script>\n";
-  //   Str += "</body>\n";
-  //   Str += "</html>\n";
-  //   request->send(200, "text/html", Str);
-  // });
+    // JavaScript Auto Reload Function
+    Str += "<script>\n";
+    Str += "setTimeout(function(){\n";
+    Str += "window.location.reload();\n";
+    Str += "}, 1000);\n";
+    Str += "</script>\n";
+    Str += "</body>\n";
+    Str += "</html>\n";
+    request->send(200, "text/html", Str);
+  });
 
   // Handle form submission
   server.on("/get", HTTP_POST, [](AsyncWebServerRequest *request) {                         // Function handling the "/get" route
